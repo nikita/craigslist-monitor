@@ -1,0 +1,25 @@
+{
+  "name": "craigslist-monitor",
+  "version": "0.0.1",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node ./index",
+    "dev": "nodemon ./index"
+  },
+  "keywords": [],
+  "author": "никита",
+  "license": "MIT",
+  "dependencies": {
+    "cheerio": "^1.0.0-rc.3",
+    "cron": "^1.8.2",
+    "dotenv": "^8.2.0",
+    "moment": "^2.27.0",
+    "mongoose": "^5.9.25",
+    "request": "^2.88.2",
+    "request-promise": "^4.2.6"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.4"
+  }
+}
