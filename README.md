@@ -1,3 +1,3 @@
 # craiglist-monitor
 
-Monitor for new items from keywords
+Monitor for new items on craigslist from keyword(s)

@@ -8,10 +8,11 @@ const Post = require("./models/Post");
 const CronJob = require("cron").CronJob;
 const areas = require("./areas.json");
 const { version } = require("./package.json");
+const { sleep, randomBetween } = require("./classes/utils");
 
 const { MONGODB_URI, DISCORD_WEBHOOK } = process.env;
 
-const keywords = ["KEYWORD_HERE"];
+const keywords = ["suzuki gsxr", "yamaha r6"];
 
 // Connect to MongoDB
 mongoose
@@ -36,44 +37,51 @@ mongoose
     process.exit();
   });
 
-const sleep = (milliseconds) => {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
-};
-
 const getPosts = async (url, query) => {
-  const response = await rp({
-    uri: `${url}&query=${query}`,
-    method: "GET",
-    headers: {
-      Connection: "keep-alive",
-      "Upgrade-Insecure-Requests": 1,
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/84.0.4147.89 Safari/537.36",
-      Accept:
-        "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
-      "Sec-Fetch-Site": "none",
-      "Sec-Fetch-Mode": "navigate",
-      "Sec-Fetch-User": "?1",
-      "Sec-Fetch-Dest": "document",
-      "Accept-Encoding": "gzip, deflate, br",
-      "Accept-Language": "en-US,en;q=0.9",
-    },
-    proxy: "http://127.0.0.1:6666",
-    strictSSL: false,
-    gzip: true,
-  });
+  while (true) {
+    try {
+      const response = await rp({
+        // Look for query in title only & bundle duplicates
+        uri: `${url}&query=${query}&srchType=T&bundleDuplicates=1`,
+        method: "GET",
+        headers: {
+          Connection: "keep-alive",
+          "Upgrade-Insecure-Requests": 1,
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/84.0.4147.89 Safari/537.36",
+          Accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
+          "Sec-Fetch-Site": "none",
+          "Sec-Fetch-Mode": "navigate",
+          "Sec-Fetch-User": "?1",
+          "Sec-Fetch-Dest": "document",
+          "Accept-Encoding": "gzip, deflate, br",
+          "Accept-Language": "en-US,en;q=0.9",
+        },
+        gzip: true,
+        resolveWithFullResponse: true,
+        simple: false,
+      });
 
-  const $ = cheerio.load(response);
+      const $ = cheerio.load(response.body);
 
-  // All rows of listings
-  const rows = $('ul[class="rows"]');
+      // All rows of listings
+      const rows = $('ul[class="rows"]');
 
-  // Row of listings
-  const rowItems = rows.find('li[class="result-row"]');
+      // Row of listings
+      const rowItems = rows.find('li[class="result-row"]');
 
-  rowItems.each(function (i, elem) {
-    parsePost($(this));
-  });
+      rowItems.each(async function (i, elem) {
+        await parsePost($(this));
+      });
+
+      return true;
+    } catch (err) {
+      console.log(err);
+      // Retry delay
+      await sleep(randomBetween(5000, 15000));
+    }
+  }
 };
 
 const parsePost = async (postHtml) => {
@@ -124,44 +132,57 @@ const parsePost = async (postHtml) => {
     } catch (err) {
       console.log(err, post);
     }
-    SendWebhook(post);
+
+    sendWebhook(post);
   }
 };
 
-const SendWebhook = ({ title, price, city, images, url }) => {
-  rp.post({
-    uri: DISCORD_WEBHOOK,
-    body: {
-      username: "Craiglist Monitor",
-      avatar_url:
-        "https://encrypted-tbn0.gstatic.com/images?q=tbn%3AANd9GcTU2GLQTYQfP237RU9bs8hihlY87Yvfw8Gl3g",
-      embeds: [
-        {
-          title,
-          url,
-          fields: [
-            {
-              name: "Price",
-              value: `$${price}`,
-              inline: true,
+const sendWebhook = async ({ title, price, city, images, url }) => {
+  while (true) {
+    const response = await rp.post({
+      uri: DISCORD_WEBHOOK,
+      body: {
+        username: "Craiglist Monitor",
+        avatar_url:
+          "https://encrypted-tbn0.gstatic.com/images?q=tbn%3AANd9GcTU2GLQTYQfP237RU9bs8hihlY87Yvfw8Gl3g",
+        embeds: [
+          {
+            title,
+            url,
+            fields: [
+              {
+                name: "Price",
+                value: `$${price}`,
+                inline: true,
+              },
+              {
+                name: "City",
+                value: city,
+                inline: true,
+              },
+            ],
+            thumbnail: {
+              url: images[0],
             },
-            {
-              name: "City",
-              value: city,
-              inline: true,
+            footer: {
+              text: `Craigslist v${version} | @Unverifieds [${moment().format()}]`,
             },
-          ],
-          thumbnail: {
-            url: images[0],
           },
-          footer: {
-            text: `Craigslist v${version} | @Unverifieds [${moment().format()}]`,
-          },
-        },
-      ],
-    },
-    json: true,
-  });
+        ],
+      },
+      json: true,
+      resolveWithFullResponse: true,
+      simple: false,
+    });
+
+    if (response.statusCode === 429) {
+      const msg = JSON.parse(response.body);
+      console.log(`Rate limited for ${msg.retry_after} ms`);
+      await sleep(msg.retry_after);
+    } else {
+      break;
+    }
+  }
 };
 
 const scrape = async () => {
@@ -171,15 +192,16 @@ const scrape = async () => {
 
     // Loop through each keyword for an area
     for (const keyword of keywords) {
-      getPosts(area.url, keyword);
+      await getPosts(area.url, keyword);
     }
 
-    console.log("Sleeping for 5 seconds");
-    await sleep(5000);
+    const randomSleep = randomBetween(5000, 15000);
+    console.log(`Sleeping for ${randomSleep} ms`);
+    await sleep(randomSleep);
   }
 };
 
-const job = new CronJob(
+new CronJob(
   // Every 30 minutes
   "*/30 * * * *",
   async function () {
